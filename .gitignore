@@ -1,3 +1,14 @@
 /build_riscv_debug
 /build_riscv_release
 *.o
+
+# OS / 编辑器垃圾
+.DS_Store
+
+# 构建产物 / 打包的库（可由 SDK 重新生成，勿入库）
+*.zip
+/deploy_libs/
+
+# 本地文档 / 排障脚本（不入库）
+/PORTING_PROGRESS.md
+/scripts/uart_scan.sh

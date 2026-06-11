@@ -62,11 +62,17 @@ endif()
 
 set(EXTRA_LIBS ${EXTRA_LIBS} dl stdc++ pthread z atomic)
 
-# Camera selection: USE_ESP32_CAMERA=ON uses ESP32-CAM via ioctl, OFF uses VI+VPSS
+# Camera selection: USE_ESP32_CAMERA=ON uses ESP32-CAM via ioctl,
+#                   USE_UVC_CAMERA=ON uses a USB UVC camera via V4L2 (/dev/videoN),
+#                   both OFF uses VI+VPSS (MIPI sensor).
 option(USE_ESP32_CAMERA "Use ESP32-CAM via /dev/cvi-camera ioctl instead of VI" OFF)
+option(USE_UVC_CAMERA "Use a USB UVC camera via V4L2 instead of VI" OFF)
 if(USE_ESP32_CAMERA)
   add_definitions(-DUSE_ESP32_CAMERA=1)
   message(STATUS "Camera: ESP32-CAM (ioctl mode)")
+elseif(USE_UVC_CAMERA)
+  add_definitions(-DUSE_UVC_CAMERA=1)
+  message(STATUS "Camera: USB UVC (V4L2 mode)")
 else()
   message(STATUS "Camera: VI + VPSS (hardware mode)")
 endif()
@@ -79,13 +85,19 @@ endif()
 # 添加通用检测模块支持
 
 if(USE_ESP32_CAMERA)
-  add_executable(tennis tennis.cpp motor.cpp arm.cpp esp32_capture.cpp detect.cpp)
+  add_executable(tennis tennis.cpp motor.cpp pwm_motor_driver.cpp uart_motor_driver.cpp arm.cpp bucket_detect.cpp esp32_capture.cpp detect.cpp)
+  target_link_libraries(tennis
+      ${CVI_LIBS}
+      ${OPENCV_LIBS}
+      ${EXTRA_LIBS})
+elseif(USE_UVC_CAMERA)
+  add_executable(tennis tennis.cpp motor.cpp pwm_motor_driver.cpp uart_motor_driver.cpp arm.cpp bucket_detect.cpp uvc_capture.cpp detect.cpp)
   target_link_libraries(tennis
       ${CVI_LIBS}
       ${OPENCV_LIBS}
       ${EXTRA_LIBS})
 else()
-  add_executable(tennis tennis.cpp motor.cpp arm.cpp vi_capture.cpp detect.cpp)
+  add_executable(tennis tennis.cpp motor.cpp pwm_motor_driver.cpp uart_motor_driver.cpp arm.cpp bucket_detect.cpp vi_capture.cpp detect.cpp)
   target_link_libraries(tennis
       ${CVI_LIBS}
       ${OPENCV_LIBS}
@@ -108,7 +120,19 @@ install(TARGETS tennis DESTINATION samples_extra/bin)
 add_executable(test_arm tests/test_arm.cpp arm.cpp)
 
 # Motor test utility (no SDK dependencies needed)
-add_executable(test_motor tests/test_motor.cpp motor.cpp)
+add_executable(test_motor tests/test_motor.cpp motor.cpp pwm_motor_driver.cpp uart_motor_driver.cpp)
+
+# UART probe utility: send INIT frame and check for a valid ACK, to find which
+# /dev/ttySx is the ESP32-C3 motor controller (no SDK dependencies needed)
+add_executable(test_uart_probe tests/test_uart_probe.cpp)
+
+# ESP32 camera standalone test (no cvitek SDK / no TPU dependencies)
+# Verifies /dev/cvi-camera0 ioctl path through cvi_camera.rs kernel driver.
+add_executable(test_esp32_capture tests/test_esp32_capture.cpp)
+
+# UVC camera standalone test (V4L2, no cvitek SDK / no TPU dependencies)
+# Opens /dev/videoN, grabs frames, dumps last frame to verify UVC capture.
+add_executable(test_uvc_capture tests/test_uvc_capture.cpp uvc_capture.cpp)
 
 # Single-frame capture + detection utility
 # Author: Zhihang Shao <dio_ro@outlook.com>

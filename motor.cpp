@@ -1,142 +1,66 @@
+// Author: Zhihang Shao <dio_ro@outlook.com>
+// Source: ported from aka-rk3588/motor/motor.cpp
+// Description: 电机高层 API，委托给 PWM 或 UART 驱动后端
 #include "motor.hpp"
-#include <fstream>
-#include <iostream>
-#include <unistd.h>
+#include "pwm_motor_driver.hpp"
+#include "uart_motor_driver.hpp"
+#include <cstdlib>
+#include <algorithm>
 
-Motor::Motor() {
-    init_pwm(LEFT_WHEEL_BACKWARD);
-    init_pwm(LEFT_WHEEL_FORWARD);
-    init_pwm(RIGHT_WHEEL_BACKWARD);
-    init_pwm(RIGHT_WHEEL_FORWARD);
-}
-
-Motor::~Motor() {
-    standby();
-}
-
-void Motor::init_pwm(int pwm_id) {
-    std::ofstream ofs_export(PWM_PATH + "export");
-    if (ofs_export.is_open()) {
-        ofs_export << pwm_id;
-        ofs_export.close();
-    }
-
-    std::string pwm_channel_path = PWM_PATH + "pwm" + std::to_string(pwm_id);
-
-    std::ofstream ofs_period(pwm_channel_path + "/period");
-    if (ofs_period.is_open()) {
-        ofs_period << PERIOD;
-        ofs_period.close();
+Motor::Motor(MotorDriverType type, const std::string& device) {
+    switch (type) {
+    case MotorDriverType::PWM:
+        // PWM 后端使用 sysfs 路径；device 为空时用默认 pwmchip4
+        driver_.reset(new PwmMotorDriver(
+            device.empty() ? "/sys/class/pwm/pwmchip4/" : device));
+        break;
+    case MotorDriverType::UART:
+    default:
+        driver_.reset(new UartMotorDriver(device));
+        break;
     }
 }
 
-void Motor::set_pwm_duty_cycle(int pwm_id, int duty_cycle) {
-    std::string duty_cycle_path = PWM_PATH + "pwm" + std::to_string(pwm_id) + "/duty_cycle";
-    std::ofstream ofs(duty_cycle_path);
-    if (ofs.is_open()) {
-        ofs << duty_cycle;
-        ofs.close();
-    }
-}
-
-void Motor::set_pwm_enable(int pwm_id, bool enable) {
-    std::string enable_path = PWM_PATH + "pwm" + std::to_string(pwm_id) + "/enable";
-    std::ofstream ofs(enable_path);
-    if (ofs.is_open()) {
-        ofs << (enable ? "1" : "0");
-        ofs.close();
-    }
-}
-
-void Motor::set_speed(int pwm_id, int speed) {
-    if (speed < 0)
-        speed = 0;
-    if (speed > 100)
-        speed = 100;
-    int duty_cycle = PERIOD - (speed / 100.0) * PERIOD;
-    set_pwm_duty_cycle(pwm_id, duty_cycle);
-}
+Motor::~Motor() = default;
 
 void Motor::forward(int speed) {
-    set_speed(LEFT_WHEEL_FORWARD, speed);
-    set_pwm_enable(LEFT_WHEEL_FORWARD, true);
-    set_pwm_enable(LEFT_WHEEL_BACKWARD, false);
-
-    set_speed(RIGHT_WHEEL_FORWARD, speed);
-    set_pwm_enable(RIGHT_WHEEL_FORWARD, true);
-    set_pwm_enable(RIGHT_WHEEL_BACKWARD, false);
+    drive(speed, speed);
 }
 
 void Motor::backward(int speed) {
-    set_speed(LEFT_WHEEL_BACKWARD, speed);
-    set_pwm_enable(LEFT_WHEEL_BACKWARD, true);
-    set_pwm_enable(LEFT_WHEEL_FORWARD, false);
-
-    set_speed(RIGHT_WHEEL_BACKWARD, speed);
-    set_pwm_enable(RIGHT_WHEEL_BACKWARD, true);
-    set_pwm_enable(RIGHT_WHEEL_FORWARD, false);
+    drive(-speed, -speed);
 }
 
 void Motor::left(int speed) {
-    set_speed(RIGHT_WHEEL_FORWARD, speed);
-    set_pwm_enable(RIGHT_WHEEL_FORWARD, true);
-    set_pwm_enable(RIGHT_WHEEL_BACKWARD, false);
-
-    set_pwm_enable(LEFT_WHEEL_FORWARD, false);
-    set_pwm_enable(LEFT_WHEEL_BACKWARD, false);
+    // Spin left: right wheel forward, left wheel backward
+    drive(-speed, speed);
 }
 
 void Motor::right(int speed) {
-    set_speed(LEFT_WHEEL_FORWARD, speed);
-    set_pwm_enable(LEFT_WHEEL_FORWARD, true);
-    set_pwm_enable(LEFT_WHEEL_BACKWARD, false);
-
-    set_pwm_enable(RIGHT_WHEEL_FORWARD, false);
-    set_pwm_enable(RIGHT_WHEEL_BACKWARD, false);
+    // Spin right: left wheel forward, right wheel backward
+    drive(speed, -speed);
 }
 
 void Motor::brake() {
-    set_pwm_enable(LEFT_WHEEL_FORWARD, true);
-    set_pwm_enable(LEFT_WHEEL_BACKWARD, true);
-    set_pwm_enable(RIGHT_WHEEL_FORWARD, true);
-    set_pwm_enable(RIGHT_WHEEL_BACKWARD, true);
+    driver_->brake();
 }
 
 void Motor::standby() {
-    set_pwm_enable(LEFT_WHEEL_FORWARD, false);
-    set_pwm_enable(LEFT_WHEEL_BACKWARD, false);
-    set_pwm_enable(RIGHT_WHEEL_FORWARD, false);
-    set_pwm_enable(RIGHT_WHEEL_BACKWARD, false);
+    driver_->standby();
 }
 
-// Author: Zhihang Shao <dio_ro@outlook.com>
-// Source: aka0-ref commits 755a885, 9c69f3f
-// 差速驱动实现，commit 9c69f3f: 右轮速度补偿+2修正偏差
 void Motor::drive(int left_speed, int right_speed) {
-    // 左轮
-    if (left_speed > 0) {
-        set_speed(LEFT_WHEEL_FORWARD, left_speed);
-        set_pwm_enable(LEFT_WHEEL_FORWARD, true);
-        set_pwm_enable(LEFT_WHEEL_BACKWARD, false);
-    } else if (left_speed < 0) {
-        set_speed(LEFT_WHEEL_BACKWARD, -left_speed);
-        set_pwm_enable(LEFT_WHEEL_BACKWARD, true);
-        set_pwm_enable(LEFT_WHEEL_FORWARD, false);
-    } else {
-        set_pwm_enable(LEFT_WHEEL_FORWARD, false);
-        set_pwm_enable(LEFT_WHEEL_BACKWARD, false);
-    }
-    // 右轮（带+2速度补偿修正偏差）
-    if (right_speed > 0) {
-        set_speed(RIGHT_WHEEL_FORWARD, right_speed + 2);
-        set_pwm_enable(RIGHT_WHEEL_FORWARD, true);
-        set_pwm_enable(RIGHT_WHEEL_BACKWARD, false);
-    } else if (right_speed < 0) {
-        set_speed(RIGHT_WHEEL_BACKWARD, -right_speed + 2);
-        set_pwm_enable(RIGHT_WHEEL_BACKWARD, true);
-        set_pwm_enable(RIGHT_WHEEL_FORWARD, false);
-    } else {
-        set_pwm_enable(RIGHT_WHEEL_FORWARD, false);
-        set_pwm_enable(RIGHT_WHEEL_BACKWARD, false);
-    }
+    // 死区映射：非零速度拉到 [min_speed_, 100]
+    auto map = [&](int v) -> int {
+        if (v == 0)
+            return 0;
+        int sign = (v > 0) ? 1 : -1;
+        int mag = std::abs(v);
+        // 线性映射：[1,100] -> [min_speed_, 100]
+        mag = min_speed_ + (mag - 1) * (100 - min_speed_) / 99;
+        if (mag > 100)
+            mag = 100;
+        return sign * mag;
+    };
+    driver_->drive(map(left_speed), map(right_speed));
 }

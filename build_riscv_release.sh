@@ -30,10 +30,13 @@ cd build_riscv_release
 # 摄像头选择: USE_ESP32=1 ./build_riscv_release.sh 使用ESP32-CAM
 LOG_LEVEL=${LOG_LEVEL:-warn}
 
-ESP32_FLAG=""
+CAM_FLAG=""
 if [ "${USE_ESP32}" = "1" ]; then
-    ESP32_FLAG="-DUSE_ESP32_CAMERA=ON"
+    CAM_FLAG="-DUSE_ESP32_CAMERA=ON"
     echo "Camera: ESP32-CAM (ioctl mode)"
+elif [ "${USE_UVC}" = "1" ]; then
+    CAM_FLAG="-DUSE_UVC_CAMERA=ON"
+    echo "Camera: USB UVC (V4L2 mode)"
 else
     echo "Camera: VI + VPSS (hardware mode)"
 fi
@@ -51,7 +54,7 @@ cmake .. \
     -DTPU_SDK_PATH=${TPU_SDK_PATH} \
     -DOPENCV_PATH=${OPENCV_PATH} \
     -DLOG_LEVEL=${LOG_LEVEL} \
-    ${ESP32_FLAG}
+    ${CAM_FLAG}
 
 # 编译
 make -j$(nproc)

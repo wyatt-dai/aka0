@@ -137,9 +137,8 @@ void Arm::restore_torque(int servo_id) {
     LOGD("[ARM] servo %d torque restored", servo_id);
 }
 
-// Grab sequence
-// 初始(200,200,175开) → 伸下(240,175,175开) → 夹紧(240,175,135闭)
-// → 展示(165,180,135闭) → 放球(165,180,175开) → 回初始(200,200,175开)
+// Grab sequence (抓取后保持夹住，等送到桶边再 release 放球)
+// 初始(200,200,175开) → 伸下(240,175,175开) → 夹紧(240,175,135闭) → 抬起展示(165,180,135闭)
 void Arm::grab() {
     LOGI("[ARM] Grab sequence start");
 
@@ -149,25 +148,16 @@ void Arm::grab() {
     set_angle(2, ID2_ANGLE_OPEN);
     usleep(1500 * 1000);
 
-    // 2. 爪子闭合
+    // 2. 爪子闭合，夹住球
     set_angle(2, ID2_ANGLE_CLOSE);
     usleep(1000 * 1000);
 
-    // 3. 抬起展示
+    // 3. 抬起，保持夹住（送往桶的途中不松手）
     set_angle(0, SERVO0_LIFT);
     set_angle(1, SERVO1_LIFT);
     usleep(1000 * 1000);
 
-    // 4. 松开球
-    set_angle(2, ID2_ANGLE_OPEN);
-    usleep(800 * 1000);
-
-    // 5. 回到初始
-    set_angle(0, SERVO0_READY);
-    set_angle(1, SERVO1_READY);
-    usleep(800 * 1000);
-
-    LOGI("[ARM] Grab sequence done");
+    LOGI("[ARM] Grab sequence done (ball held)");
 }
 
 void Arm::release_pos() {
