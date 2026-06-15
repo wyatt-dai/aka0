@@ -59,9 +59,9 @@ static const int UVC_CAP_WIDTH  = 640;
 static const int UVC_CAP_HEIGHT = 480;
 #endif
 
-// ── Chase 控制参数（移植自 rk3588，640x640 下建议重新标定 area_*）────────────
-static const int   CHASE_SPEED_FAR  = 40;
-static const int   CHASE_SPEED_NEAR = 3;
+// ── Chase 控制参数（映射后：快轮20，慢轮15）────────────────────────────────
+static const int   CHASE_SPEED_FAR  = 4;   // →映射17
+static const int   CHASE_SPEED_NEAR = 3;   // →映射16
 
 static const float AREA_FAR         = 0.02f;
 static const float AREA_NEAR        = 0.35f;
@@ -70,37 +70,37 @@ static const float AREA_BRAKE       = 0.20f;
 static const int   BRAKE_SPEED      = 3;
 static const float AREA_STOP        = 0.28f;
 static const float AREA_REVERSE     = 0.50f;
-static const int   REVERSE_SPEED    = 15;
+static const int   REVERSE_SPEED    = 2;   // →映射15
 
 static const float AREA_STOP_EXIT   = 0.20f;
 static const int   STOP_CONFIRM_CNT = 4;
 static const int   BRAKE_PULSE_US   = 350000;
-static const int   STOP_CENTER_OFFSET = 90;   // 目标：球落在中心偏右（夹爪偏置）
+static const int   STOP_CENTER_OFFSET = 120;  // 目标：球落在中心偏右（夹爪偏置）
 
-static const float K_TURN              = 25.0f;
-static const int   MAX_TURN_BIAS_FAR   = 5;
-static const int   MAX_TURN_BIAS_NEAR  = 10;
-static const int   CENTER_DEAD_ZONE    = 15;
-static const int   STOP_CENTER_ZONE    = 5;
-static const int   ALIGN_PIVOT_SPD     = 15;
-static const int   ALIGN_PIVOT_MIN     = 3;
+static const float K_TURN              = 6.0f;
+static const int   MAX_TURN_BIAS_FAR   = 3;   // →映射16
+static const int   MAX_TURN_BIAS_NEAR  = 1;   // →映射15
+static const int   CENTER_DEAD_ZONE    = 5;
+static const int   STOP_CENTER_ZONE    = 20;
+static const int   ALIGN_PIVOT_SPD     = 2;   // →映射15
+static const int   ALIGN_PIVOT_MIN     = 2;   // →映射15
 
 static const int   SEARCH_FRAMES    = 25;
-static const int   SEARCH_PIVOT_SPD = 10;
+static const int   SEARCH_PIVOT_SPD = 3;   // →映射16
 
 static const int   ALIGN_STALL_FRAMES  = 20;
 static const int   ALIGN_STALL_MOVE_PX = 10;
-static const int   ALIGN_KICK_SPD      = 35;
+static const int   ALIGN_KICK_SPD      = 3;   // →映射16
 static const int   ALIGN_KICK_US       = 180000;
 
 // ── Bucket 趋近参数 ──────────────────────────────────────────────────────────
 static const float BUCKET_AREA_DEPOSIT  = 0.90f; // 桶够大 → 放球
 static const float BUCKET_AREA_BRAKE    = 0.70f; // 桶很大 → 减速防撞
-static const int   BUCKET_APPROACH_SPD  = 25;
-static const int   BUCKET_BRAKE_SPD     = 5;
-static const float BUCKET_K_TURN        = 20.0f;
-static const int   BUCKET_MAX_BIAS      = 8;
-static const int   BUCKET_SEARCH_SPD    = 12;
+static const int   BUCKET_APPROACH_SPD  = 4;   // →映射17
+static const int   BUCKET_BRAKE_SPD     = 2;   // →映射16
+static const float BUCKET_K_TURN        = 5.0f;
+static const int   BUCKET_MAX_BIAS      = 3;   // →映射16
+static const int   BUCKET_SEARCH_SPD    = 3;   // →映射16
 static const int   BUCKET_LOST_FRAMES   = 10;
 static const int   BUCKET_CONFIRM_CNT   = 3;
 static const int   BUCKET_MIN_AREA      = 1000; // HSV 最小连通域像素
@@ -162,7 +162,30 @@ static long elapsed_us(const struct timeval& start) {
 }
 
 #if USE_UVC_CAMERA
-// 从 UVC 相机抓一帧 -> 解码 -> resize 到 FRAME_WIDTH x FRAME_HEIGHT 的 BGR。
+// Letterbox 参数：用于将检测坐标从模型输入空间映射回原始相机画面
+static int   g_lb_pad_x  = 0;
+static int   g_lb_pad_y  = 0;
+static float g_lb_scale  = 1.0f;
+static int   g_cam_w     = UVC_CAP_WIDTH;
+static int   g_cam_h     = UVC_CAP_HEIGHT;
+
+// letterbox: 等比缩放 + 灰色(114)填充，与 rk3588 decode_mjpeg 行为一致
+static void letterbox(const cv::Mat& src, cv::Mat& dst,
+                      int out_w, int out_h,
+                      int& pad_x, int& pad_y, float& scale) {
+    scale = std::min((float)out_w / src.cols, (float)out_h / src.rows);
+    int nw = (int)(src.cols * scale);
+    int nh = (int)(src.rows * scale);
+    pad_x = (out_w - nw) / 2;
+    pad_y = (out_h - nh) / 2;
+
+    dst = cv::Mat(out_h, out_w, CV_8UC3, cv::Scalar(114, 114, 114));
+    cv::Mat resized;
+    cv::resize(src, resized, cv::Size(nw, nh));
+    resized.copyTo(dst(cv::Rect(pad_x, pad_y, nw, nh)));
+}
+
+// 从 UVC 相机抓一帧 -> 解码 -> letterbox 到 FRAME_WIDTH x FRAME_HEIGHT 的 BGR。
 // UVC 出 MJPEG 时用 imdecode；个别相机出 YUYV 时按 YUYV->BGR 转。
 // 返回 true 表示 bgr 有效。
 static bool uvc_grab_bgr(UvcCapture& cam, cv::Mat& bgr) {
@@ -184,10 +207,16 @@ static bool uvc_grab_bgr(UvcCapture& cam, cv::Mat& bgr) {
     }
     if (decoded.empty()) return false;
 
-    if (decoded.cols != FRAME_WIDTH || decoded.rows != FRAME_HEIGHT)
-        cv::resize(decoded, bgr, cv::Size(FRAME_WIDTH, FRAME_HEIGHT));
-    else
+    g_cam_w = decoded.cols;
+    g_cam_h = decoded.rows;
+
+    if (decoded.cols != FRAME_WIDTH || decoded.rows != FRAME_HEIGHT) {
+        letterbox(decoded, bgr, FRAME_WIDTH, FRAME_HEIGHT,
+                  g_lb_pad_x, g_lb_pad_y, g_lb_scale);
+    } else {
         bgr = decoded;
+        g_lb_pad_x = 0; g_lb_pad_y = 0; g_lb_scale = 1.0f;
+    }
     return true;
 }
 #endif
@@ -200,10 +229,13 @@ static int base_speed(float area_ratio) {
     return (int)(CHASE_SPEED_FAR + t * (BRAKE_SPEED - CHASE_SPEED_FAR));
 }
 
+static int g_stop_center_offset = STOP_CENTER_OFFSET;  // 可通过命令行覆盖
+
 static void usage(char** argv) {
     LOGI("Usage:");
-    LOGI("  %s <model.cvimodel> [vi_channel|esp32] [uart_dev] [arm_dev]", argv[0]);
-    LOGI("  Example: %s tennis.cvimodel 0 /dev/ttyS1 /dev/ttyS2", argv[0]);
+    LOGI("  %s <model.cvimodel> [vi_channel|esp32] [uart_dev] [arm_dev] [offset]", argv[0]);
+    LOGI("  Example: %s tennis.cvimodel 0 /dev/ttyS1 /dev/ttyS2 120", argv[0]);
+    LOGI("  offset: ball target x-offset from frame center (default=%d, negative=left)", STOP_CENTER_OFFSET);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -216,6 +248,7 @@ int main(int argc, char** argv)
     int         vi_channel = (argc >= 3 && strcmp(argv[2], "esp32") != 0) ? atoi(argv[2]) : 0;
     const char* uart_dev   = (argc >= 4) ? argv[3] : "/dev/ttyS1";
     const char* arm_dev    = (argc >= 5) ? argv[4] : "/dev/ttyS2";
+    if (argc >= 6) g_stop_center_offset = atoi(argv[5]);
 
     signal(SIGINT,  signal_handler);
     signal(SIGTERM, signal_handler);
@@ -326,6 +359,7 @@ int main(int argc, char** argv)
     int  bucket_lost_cnt  = 0;   // 连续找不到桶的帧数
     int  bucket_confirm   = 0;   // 连续看到桶的帧数（防抖）
 
+    LOGI("STOP_CENTER_OFFSET=%d", g_stop_center_offset);
     LOGI("Entering main loop. Ctrl-C to exit.");
 
     while (true) {
@@ -476,18 +510,45 @@ int main(int argc, char** argv)
         NMS(dets, &det_num, 0.45f);
         correctYoloBoxes(dets, det_num, img_h, img_w, model_h, model_w);
 
+        // ── 将检测坐标从 letterbox 空间映射回原始相机画面 ──────────────────────
+#if USE_UVC_CAMERA
+        if (g_lb_scale != 1.0f || g_lb_pad_x != 0 || g_lb_pad_y != 0) {
+            for (int i = 0; i < det_num; i++) {
+                float cx = dets[i].bbox.x, cy = dets[i].bbox.y;
+                float w = dets[i].bbox.w, h = dets[i].bbox.h;
+                float x1 = cx - w * 0.5f, y1 = cy - h * 0.5f;
+                float x2 = cx + w * 0.5f, y2 = cy + h * 0.5f;
+                x1 = std::max(0.0f, (x1 - g_lb_pad_x) / g_lb_scale);
+                y1 = std::max(0.0f, (y1 - g_lb_pad_y) / g_lb_scale);
+                x2 = std::min((float)g_cam_w, (x2 - g_lb_pad_x) / g_lb_scale);
+                y2 = std::min((float)g_cam_h, (y2 - g_lb_pad_y) / g_lb_scale);
+                dets[i].bbox.x = (x1 + x2) * 0.5f;
+                dets[i].bbox.y = (y1 + y2) * 0.5f;
+                dets[i].bbox.w = x2 - x1;
+                dets[i].bbox.h = y2 - y1;
+            }
+        }
+        const int cam_half_w = g_cam_w / 2;
+#else
+        const int cam_half_w = half_w;
+#endif
+
         // ── 平滑差速转向 ────────────────────────────────────────────────────────
         if (!dets.empty()) {
             int best = 0;
             for (int i = 1; i < (int)dets.size(); i++)
                 if (dets[i].bbox.w * dets[i].bbox.h >
                     dets[best].bbox.w * dets[best].bbox.h)
-                    best = i;
+                best = i;
 
             const box& b     = dets[best].bbox;
+#if USE_UVC_CAMERA
+            float area_ratio = (b.w * b.h) / (float)(g_cam_w * g_cam_h);
+#else
             float area_ratio = (b.w * b.h) / (float)(img_w * img_h);
+#endif
             int   ball_cx    = (int)b.x;
-            int   offset     = ball_cx - half_w;   // <0 = 球在左
+            int   offset     = ball_cx - cam_half_w;   // <0 = 球在左
 
             last_offset     = offset;
             last_seen_frame = frame_idx;
@@ -517,10 +578,10 @@ int main(int argc, char** argv)
 
             // ── 后退：球占画面过大 ────────────────────────────────────────────
             if (area_ratio >= AREA_REVERSE) {
-                int rev_l = (offset > CENTER_DEAD_ZONE)  ? -REVERSE_SPEED + 5 :
-                            (offset < -CENTER_DEAD_ZONE) ? -REVERSE_SPEED - 5 : -REVERSE_SPEED;
-                int rev_r = (offset > CENTER_DEAD_ZONE)  ? -REVERSE_SPEED - 5 :
-                            (offset < -CENTER_DEAD_ZONE) ? -REVERSE_SPEED + 5 : -REVERSE_SPEED;
+                int rev_l = (offset > CENTER_DEAD_ZONE)  ? -REVERSE_SPEED + 1 :
+                            (offset < -CENTER_DEAD_ZONE) ? -REVERSE_SPEED - 1 : -REVERSE_SPEED;
+                int rev_r = (offset > CENTER_DEAD_ZONE)  ? -REVERSE_SPEED - 1 :
+                            (offset < -CENTER_DEAD_ZONE) ? -REVERSE_SPEED + 1 : -REVERSE_SPEED;
                 motor.drive(rev_l, rev_r);
                 LOGI("[STATE] REVERSE  area=%.3f off=%d  L=%d R=%d",
                      area_ratio, offset, rev_l, rev_r);
@@ -528,7 +589,7 @@ int main(int argc, char** argv)
             }
 
             // ── 停车条件：够近且球落在目标偏置，连续确认 N 帧 ─────────────────
-            int stop_off = offset - STOP_CENTER_OFFSET;  // 目标：球落在中心偏右
+            int stop_off = offset - g_stop_center_offset;
             if (area_ratio >= AREA_STOP && abs(stop_off) <= STOP_CENTER_ZONE) {
                 stop_confirm_cnt++;
                 align_cnt = 0; align_off_head = 0;
@@ -580,7 +641,7 @@ int main(int argc, char** argv)
                     continue;
                 }
 
-                float t = std::min(1.0f, (float)abs(stop_off) / (float)half_w);
+                float t = std::min(1.0f, (float)abs(stop_off) / (float)cam_half_w);
                 int pivot_spd = (int)(ALIGN_PIVOT_MIN + t * (ALIGN_PIVOT_SPD - ALIGN_PIVOT_MIN));
                 int pivot = (stop_off > 0) ? pivot_spd : -pivot_spd;
                 motor.drive(pivot, -pivot);
@@ -593,7 +654,7 @@ int main(int argc, char** argv)
 
             // ── 追球 ──────────────────────────────────────────────────────────
             int bias = (abs(offset) <= CENTER_DEAD_ZONE) ? 0
-                     : (int)(K_TURN * offset / (float)half_w);
+                     : (int)(K_TURN * offset / (float)cam_half_w);
 
             int left_spd, right_spd;
             if (area_ratio >= AREA_NEAR) {

@@ -211,23 +211,16 @@ void UartMotorDriver::cmd_set_speeds(int16_t m1_rpm, int16_t m2_rpm) {
     uint8_t p1[3] = {0x00, (uint8_t)((uint16_t)m1_rpm >> 8), (uint8_t)((uint16_t)m1_rpm & 0xFF)};
     uint8_t p2[3] = {0x01, (uint8_t)((uint16_t)m2_rpm >> 8), (uint8_t)((uint16_t)m2_rpm & 0xFF)};
     send_frame(CMD_SET_SPEED, p1, 3);
-    uint8_t cmd, rsp[8], len;
-    recv_frame(&cmd, rsp, &len, 500);
-
     send_frame(CMD_SET_SPEED, p2, 3);
-    recv_frame(&cmd, rsp, &len, 500);
+    // 不等待回复，避免阻塞主循环（best-effort 发送）
 }
 
 void UartMotorDriver::cmd_stop(uint8_t motor_id) {
     send_frame(CMD_STOP, &motor_id, 1);
-    uint8_t cmd, rsp[8], len;
-    recv_frame(&cmd, rsp, &len, 500);
 }
 
 void UartMotorDriver::cmd_brake(uint8_t motor_id) {
     send_frame(CMD_BRAKE, &motor_id, 1);
-    uint8_t cmd, rsp[8], len;
-    recv_frame(&cmd, rsp, &len, 500);
 }
 
 // ── MotorDriver interface ─────────────────────────────────────────────────────

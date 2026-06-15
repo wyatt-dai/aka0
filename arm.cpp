@@ -11,24 +11,21 @@
 #include <cstdio>
 #include <algorithm>
 
-// Author: Zhihang Shao <dio_ro@outlook.com>
-// Source: aka0-ref commit d4fbdad
-// 舵机角度实测校准
-// 初始:    0=200 1=200 2=175(开)
-// 伸下:    0=240 1=175 2=175(开)
-// 夹紧:    0=240 1=175 2=135(闭)
-// 展示:    0=165 1=180 2=135(闭)
-// 放球:    0=165 1=180 2=175(开)
-const float Arm::ID2_ANGLE_OPEN = 175.0f;
-const float Arm::ID2_ANGLE_CLOSE = 135.0f;
-const float Arm::ANGLE_MAX = 270.0f;
+// 舵机角度实测校准（与 rk3588 对齐）
+// 初始(ready): 0=150 1=100 2=110(开)
+// 伸下(down):  0=225 1=60  2=110(开)
+// 夹住(grab):  0=225 1=60  2=50 (闭)
+// 抬起(lift):  0=150 1=100 2=50 (闭) ← 找桶姿势
+const float Arm::ID2_ANGLE_OPEN  = 110.0f;
+const float Arm::ID2_ANGLE_CLOSE =  50.0f;
+const float Arm::ANGLE_MAX       = 270.0f;
 
-const float Arm::SERVO0_READY = 200.0f;
-const float Arm::SERVO1_READY = 200.0f;
-const float Arm::SERVO0_GRAB = 240.0f;
-const float Arm::SERVO1_GRAB = 175.0f;
-const float Arm::SERVO0_LIFT = 165.0f;
-const float Arm::SERVO1_LIFT = 180.0f;
+const float Arm::SERVO0_READY = 150.0f;
+const float Arm::SERVO1_READY = 100.0f;
+const float Arm::SERVO0_GRAB  = 225.0f;
+const float Arm::SERVO1_GRAB  =  60.0f;
+const float Arm::SERVO0_LIFT  = 150.0f;
+const float Arm::SERVO1_LIFT  = 100.0f;
 
 Arm::Arm(const std::string& port, int baudrate) : fd_(-1) {
     open_serial(port, baudrate);
@@ -44,6 +41,8 @@ void Arm::open_serial(const std::string& port, int baudrate) {
         LOGE("[ARM] Failed to open serial port %s: %s", port.c_str(), strerror(errno));
         return;
     }
+    // 清除非阻塞标志，确保 write/tcdrain 正常工作
+    fcntl(fd_, F_SETFL, 0);
 
     struct termios tty;
     memset(&tty, 0, sizeof(tty));
@@ -137,8 +136,9 @@ void Arm::restore_torque(int servo_id) {
     LOGD("[ARM] servo %d torque restored", servo_id);
 }
 
-// Grab sequence (抓取后保持夹住，等送到桶边再 release 放球)
-// 初始(200,200,175开) → 伸下(240,175,175开) → 夹紧(240,175,135闭) → 抬起展示(165,180,135闭)
+// Grab sequence:
+// ready(150,100,110开) → down(225,60,110开) → grab(225,60,50闭)
+// → lift(150,100,50闭) ← 保持此姿势找桶
 void Arm::grab() {
     LOGI("[ARM] Grab sequence start");
 
@@ -148,41 +148,39 @@ void Arm::grab() {
     set_angle(2, ID2_ANGLE_OPEN);
     usleep(1500 * 1000);
 
-    // 2. 爪子闭合，夹住球
+    // 2. 爪子闭合夹住球
     set_angle(2, ID2_ANGLE_CLOSE);
     usleep(1000 * 1000);
 
-    // 3. 抬起，保持夹住（送往桶的途中不松手）
+    // 3. 抬起，保持夹住（找桶姿势）
     set_angle(0, SERVO0_LIFT);
     set_angle(1, SERVO1_LIFT);
-    usleep(1000 * 1000);
+    usleep(1200 * 1000);
 
-    LOGI("[ARM] Grab sequence done (ball held)");
+    LOGI("[ARM] Grab sequence done (holding ball, ready to find bin)");
 }
 
 void Arm::release_pos() {
-    LOGI("[ARM] Moving to release position");
-    set_angle(0, SERVO0_READY);
-    set_angle(1, SERVO1_READY);
-    set_angle(2, ID2_ANGLE_CLOSE);
+    LOGI("[ARM] Moving to release position (down, open)");
+    set_angle(0, SERVO0_GRAB);
+    set_angle(1, SERVO1_GRAB);
+    set_angle(2, ID2_ANGLE_OPEN);
 }
 
 void Arm::release() {
-    LOGI("[ARM] Releasing gripper");
-    set_angle(0, SERVO0_LIFT);
-    set_angle(1, SERVO1_LIFT);
+    LOGI("[ARM] Releasing ball (open gripper)");
     set_angle(2, ID2_ANGLE_OPEN);
 }
 
 void Arm::grab_pos() {
-    LOGI("[ARM] Moving to home/ready position");
+    LOGI("[ARM] Moving to ready position (150,100,110)");
     set_angle(0, SERVO0_READY);
     set_angle(1, SERVO1_READY);
     set_angle(2, ID2_ANGLE_OPEN);
 }
 
 void Arm::show() {
-    LOGI("[ARM] Showing ball - lifting up high");
+    LOGI("[ARM] Lift with ball (150,100,50) - find-bin pose");
     set_angle(0, SERVO0_LIFT);
     set_angle(1, SERVO1_LIFT);
     set_angle(2, ID2_ANGLE_CLOSE);

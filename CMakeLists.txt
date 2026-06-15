@@ -158,3 +158,17 @@ target_link_libraries(test_img_detect
     ${CVI_LIBS}
     ${OPENCV_LIBS}
     ${EXTRA_LIBS})
+
+# YOLO detection test utility (UVC/VI camera + letterbox + YOLO inference)
+# 用法: test_yolo <model.cvimodel> [uvc_index=0] [output.jpg]
+if(USE_ESP32_CAMERA)
+  add_executable(test_yolo tests/test_yolo.cpp esp32_capture.cpp detect.cpp)
+elseif(USE_UVC_CAMERA)
+  add_executable(test_yolo tests/test_yolo.cpp uvc_capture.cpp detect.cpp)
+else()
+  add_executable(test_yolo tests/test_yolo.cpp vi_capture.cpp detect.cpp)
+endif()
+target_link_libraries(test_yolo
+    ${CVI_LIBS}
+    ${OPENCV_LIBS}
+    ${EXTRA_LIBS})
